@@ -541,6 +541,132 @@ Replace these bytes with the address of "hello".
 
 After linking/loading, `message` contains a real address.
 
+---
+
+# Compile-Time Constants, Const, and Linkage
+
+## Q20: Is `const` the same as a compile-time constant?
+
+### Answer
+
+No.
+
+`const` means:
+
+```text
+This object cannot be modified through this name.
+```
+
+It does not always mean:
+
+```text
+The compiler knows the value at compile time.
+```
+
+Example:
+
+```cpp
+const int x = get_value();
+```
+
+`x` is const, but its value is only known after `get_value()` runs.
+
+---
+
+## Q21: What is a compile-time constant?
+
+### Answer
+
+A compile-time constant is a value the compiler can fully determine during compilation.
+
+Modern C++ usually expresses this with `constexpr`.
+
+Example:
+
+```cpp
+constexpr int BufferSize = 256;
+```
+
+The compiler knows:
+
+```text
+BufferSize == 256
+```
+
+during compilation.
+
+This can be used for templates, array sizes, and optimization.
+
+Tiny ECU example:
+
+```cpp
+constexpr std::size_t UartRxBufferSize = 256;
+```
+
+---
+
+## Q22: What about a const variable in an unnamed namespace?
+
+```cpp
+namespace
+{
+    const int kValue = 42;
+}
+```
+
+### Answer
+
+Formal classification:
+
+```text
+Namespace-scope const object
+Static storage duration
+Internal linkage
+Usually stored in .rodata
+```
+
+The unnamed namespace affects linkage/visibility, not lifetime.
+
+The `const` affects mutability.
+
+The namespace-scope placement gives it static storage duration.
+
+---
+
+## Q23: Is this a "build-time constant"?
+
+```cpp
+namespace
+{
+    const int kValue = 42;
+}
+```
+
+### Answer
+
+"Build-time constant" is informal wording, not the clearest C++ term.
+
+Better terms:
+
+```text
+const object
+static storage duration
+internal linkage
+possibly usable as a constant expression depending on context
+```
+
+If the goal is to force compile-time evaluation, prefer:
+
+```cpp
+namespace
+{
+    constexpr int kValue = 42;
+}
+```
+
+Then it is a constant expression.
+
+---
 
 ## Q24: What is the difference between `const` and `constexpr`?
 
@@ -644,6 +770,112 @@ memset(bss_start, 0, bss_size);
 ```
 
 This guarantees all `.bss` variables start as zero.
+
+---
+
+## Q28: Analyze this declaration
+
+```cpp
+int* p = new int(5);
+```
+
+### Answer
+
+Two objects exist.
+
+### Pointer variable
+
+```cpp
+p
+```
+
+```text
+Location: Stack if local
+Lifetime: Until function returns
+```
+
+### Integer object
+
+```cpp
+new int(5)
+```
+
+```text
+Location: Heap
+Lifetime: Until delete
+```
+
+Always separate:
+
+```text
+The pointer variable
+```
+
+from:
+
+```text
+The object being pointed to
+```
+
+---
+
+## Q29: Does heap memory persist if `delete` is never called?
+
+```cpp
+int* p = new int(5);
+```
+
+### Answer
+
+Yes.
+
+The object remains alive until:
+
+```cpp
+delete p;
+```
+
+or until the process exits.
+
+Failing to free memory is a memory leak.
+
+On a desktop OS, the OS reclaims memory when the process exits. That does not help a long-running program while it is still running.
+
+---
+
+## Q30: Analyze this declaration
+
+```cpp
+auto p = std::make_unique<int>(42);
+```
+
+### Answer
+
+### Smart pointer variable
+
+```cpp
+p
+```
+
+```text
+Location: Stack if local
+Lifetime: Until scope exits
+```
+
+### Integer object
+
+```cpp
+int(42)
+```
+
+```text
+Location: Heap
+Lifetime: Until p is destroyed
+```
+
+When `p` goes out of scope, the heap object is automatically deleted.
+
+This is RAII.
 
 ---
 
@@ -782,6 +1014,91 @@ The exact section placement can depend on toolchain and linker behavior, but the
 
 > Explicit nonzero initialization generally increases initialization data requirements compared to `.bss`.
 
+---
+
+## Q37: Tiny ECU UART buffer example
+
+```cpp
+static RingBuffer<uint8_t, 256> uart_rx_buffer;
+```
+
+### Answer
+
+```text
+Location: .bss, assuming zero initialization and no nontrivial constructor requiring dynamic initialization
+Lifetime: Entire program
+Initialization: Zero-initialized before main()
+```
+
+This is a common embedded pattern.
+
+It avoids:
+
+* heap allocation
+* repeated stack allocation
+* lifetime bugs
+
+---
+
+## Q38: Tiny ECU watchdog example
+
+```cpp
+static Watchdog watchdog;
+```
+
+### Answer
+
+If `Watchdog` is zero-initialized and has no nontrivial dynamic initialization requirements:
+
+```text
+Location: typically .bss
+Lifetime: Entire program
+Initialization: before main()
+```
+
+This matters because the watchdog should survive for the lifetime of the ECU.
+
+---
+
+## Q39: Tiny ECU pointer example
+
+```cpp
+static RingBuffer<uint8_t, 256> uart_rx_buffer;
+RingBuffer<uint8_t, 256>* ptr = &uart_rx_buffer;
+```
+
+### Answer
+
+There are two objects:
+
+```text
+uart_rx_buffer:
+    Location: typically .bss
+    Lifetime: entire program
+
+ptr:
+    Location: .data
+    Lifetime: entire program
+    Initial value at runtime: address of uart_rx_buffer
+```
+
+At compile time, the pointer may be represented as a relocation to the symbol `uart_rx_buffer`.
+
+---
+
+# Stage 0 Master Rule
+
+For every object or variable ask:
+
+1. Where does it live?
+2. How long does it live?
+3. Who initializes it?
+
+Also ask:
+
+4. Is it mutable or read-only?
+5. Is the value known at compile time, link time, load time, or only runtime?
+6. Am I talking about the pointer variable or the object being pointed to?
 
 ## Q39: Why does `const` placement matter for pointers?
 
@@ -1014,6 +1331,473 @@ const int* const p
 ```
 
 For Tiny ECU, this will matter when writing driver APIs and hardware register definitions.
+
+# Memory Faults: Out-of-Bounds Access vs Stack Overflow vs Segmentation Fault
+
+## Q44: What Is a Segmentation Fault?
+
+### Definition
+
+A segmentation fault is an operating-system fault that occurs when a process attempts to access memory that it is not permitted to access.
+
+Examples:
+
+```cpp
+int* p = nullptr;
+*p = 42;
+```
+
+```cpp
+delete p;
+*p = 42;
+```
+
+```cpp
+int* p = reinterpret_cast<int*>(0x1234);
+*p = 42;
+```
+
+Common causes:
+
+```text
+Null pointer dereference
+Use-after-free
+Out-of-bounds access
+Invalid pointer arithmetic
+Writing to read-only memory
+Stack overflow
+```
+
+On Linux/macOS:
+
+```text
+CPU detects invalid memory access
+↓
+Operating system receives fault
+↓
+Process terminated
+↓
+Segmentation Fault
+```
+
+---
+
+## Q44: What Is a Stack Overflow?
+
+### Definition
+
+A stack overflow occurs when the stack exceeds its available memory.
+
+Common causes:
+
+### Infinite Recursion
+
+```cpp
+void Recurse() {
+    Recurse();
+}
+```
+
+### Excessive Stack Allocation
+
+```cpp
+void Foo() {
+    int huge_buffer[10000000];
+}
+```
+
+The root problem is:
+
+```text
+Too much stack memory consumed
+```
+
+---
+
+## Q45: What Is an Out-of-Bounds Access?
+
+### Definition
+
+An out-of-bounds access occurs when code accesses memory outside the valid range of an object.
+
+Example:
+
+```cpp
+int arr[10];
+arr[100] = 42;
+```
+
+Valid indices are:
+
+```text
+0 through 9
+```
+
+Therefore:
+
+```cpp
+arr[100]
+```
+
+is an:
+
+```text
+Out-of-bounds access
+```
+
+and therefore:
+
+```text
+Undefined Behavior
+```
+
+according to the C++ language.
+
+---
+
+## Q46: What Is the Difference Between These Three Concepts?
+
+### Answer
+
+These are three different layers of the system.
+
+### Layer 1: C++ Language Rules
+
+```text
+Out-of-bounds access
+```
+
+Example:
+
+```cpp
+int arr[10];
+arr[100] = 42;
+```
+
+This violates C++ object bounds.
+
+The language says:
+
+```text
+Undefined Behavior
+```
+
+---
+
+### Layer 2: Program Behavior
+
+Undefined behavior may produce:
+
+```text
+Memory corruption
+Incorrect results
+Silent failure
+Crash
+```
+
+---
+
+### Layer 3: Operating System Protection
+
+If the invalid access reaches memory that the process does not own:
+
+```text
+CPU fault
+↓
+Operating System fault
+↓
+Segmentation Fault
+```
+
+---
+
+## Q47: Why Doesn't Every Out-of-Bounds Access Cause a Segmentation Fault?
+
+### Answer
+
+Because:
+
+```text
+Array bounds are a C++ concept.
+
+Memory permissions are an OS/hardware concept.
+```
+
+The CPU does not know:
+
+```text
+This array has length 10.
+```
+
+The CPU only knows:
+
+```text
+Read address X
+Write address Y
+```
+
+The operating system only checks:
+
+```text
+Does this process own this memory?
+```
+
+It does NOT check:
+
+```text
+Is this access inside the array bounds?
+```
+
+---
+
+## Example
+
+```cpp
+void Foo() {
+    int a = 1;
+    int arr[10];
+    int b = 2;
+
+    arr[15] = 42;
+}
+```
+
+Conceptually:
+
+```text
+Stack
+
++---------+
+|    a    |
++---------+
+| arr[0]  |
+| arr[1]  |
+| ...     |
+| arr[9]  |
++---------+
+|    b    |
++---------+
+```
+
+Suppose:
+
+```cpp
+arr[15] = 42;
+```
+
+overwrites:
+
+```text
+b
+another local variable
+saved registers
+```
+
+The CPU sees:
+
+```text
+Write to memory owned by the process
+```
+
+and allows it.
+
+Result:
+
+```text
+Out-of-bounds access
+Memory corruption
+No segmentation fault
+```
+
+---
+
+## Q48: When Does an Out-of-Bounds Access Cause a Segmentation Fault?
+
+### Answer
+
+When the invalid access reaches memory the process is not permitted to access.
+
+Example:
+
+```cpp
+int* p = nullptr;
+*p = 42;
+```
+
+or:
+
+```cpp
+int arr[10];
+arr[1000000000] = 42;
+```
+
+Eventually:
+
+```text
+Invalid memory access
+↓
+CPU fault
+↓
+Segmentation Fault
+```
+
+---
+
+## Q49: How Are Stack Overflows Related to Segmentation Faults?
+
+### Answer
+
+A stack overflow is a specific bug.
+
+A segmentation fault is often the resulting symptom.
+
+```text
+Stack Overflow
+        ↓
+Invalid Memory Access
+        ↓
+Segmentation Fault
+```
+
+This is common on Linux and macOS because the operating system protects memory regions.
+
+---
+
+## Q50: Which Concept Is More General?
+
+### Answer
+
+Segmentation fault is the most general concept.
+
+Think of it this way:
+
+```text
+Segmentation Faults
+├── Null pointer dereference
+├── Use-after-free
+├── Invalid pointer arithmetic
+├── Out-of-bounds access
+└── Stack overflow
+```
+
+Therefore:
+
+```text
+Many stack overflows eventually manifest as segmentation faults.
+
+Many out-of-bounds accesses eventually manifest as segmentation faults.
+
+Not all segmentation faults are stack overflows.
+
+Not all segmentation faults are caused by out-of-bounds accesses.
+```
+
+---
+
+## Q51: What Is the Correct Mental Model?
+
+### Answer
+
+```text
+Out-of-Bounds Access
+        ↓
+Undefined Behavior
+        ↓
+Maybe Segmentation Fault
+```
+
+```text
+Stack Overflow
+        ↓
+Invalid Memory Access
+        ↓
+Often Segmentation Fault
+```
+
+```text
+Null Pointer Dereference
+        ↓
+Invalid Memory Access
+        ↓
+Segmentation Fault
+```
+
+The key idea:
+
+```text
+Out-of-bounds access
+    = Bug
+
+Stack overflow
+    = Bug
+
+Segmentation fault
+    = Common runtime symptom
+```
+
+---
+
+## Embedded Systems Note
+
+On Linux/macOS:
+
+```text
+Memory protection exists.
+```
+
+Therefore many memory bugs become:
+
+```text
+Segmentation Fault
+```
+
+On many microcontrollers:
+
+```text
+No MMU
+No virtual memory
+Little or no memory protection
+```
+
+Therefore:
+
+```cpp
+arr[1000] = 42;
+```
+
+may instead produce:
+
+```text
+Memory corruption
+Corrupted globals
+Corrupted stack
+HardFault exception
+Watchdog reset
+Random behavior
+```
+
+without a segmentation fault.
+
+---
+
+## Interview Answer
+
+If asked:
+
+"What's the difference between an out-of-bounds access, a stack overflow, and a segmentation fault?"
+
+A strong answer is:
+
+```text
+An out-of-bounds access is a C++ language-level bug where code accesses memory outside the bounds of an object.
+
+A stack overflow is a specific bug where the stack exceeds its available memory.
+
+A segmentation fault is an operating-system fault that occurs when a process accesses memory it is not permitted to access.
+
+Both stack overflows and out-of-bounds accesses can lead to segmentation faults, but neither guarantees one. A segmentation fault is generally the symptom, while the underlying bug is often an out-of-bounds access, a stack overflow, a null pointer dereference, or another memory error.
+```
+
 
 
 ---
