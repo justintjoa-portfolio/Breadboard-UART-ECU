@@ -6,8 +6,24 @@ cc_library(
     visibility = ["//visibility:public"],
 )
 
-cc_test(
-    name = "ring_buffer_test",
-    srcs = ["tests/ring_buffer_test.cc"],
+cc_library(
+    name = "uart_simulator",
+    srcs = ["src/uart_simulator.cc"],
+    hdrs = ["include/tiny_ecu/uart_simulator.h"],
+    includes = ["include"],
+    copts = ["-std=c++17", "-Wall", "-Wextra", "-Wpedantic"],
     deps = [":ring_buffer"],
+    visibility = ["//visibility:public"],
+)
+
+cc_test(
+    name = "uart_simulator_test",
+    srcs = ["tests/uart_simulator_test.cc"],
+    deps = [":uart_simulator"],
+)
+
+cc_binary(
+    name = "volatile_experiment",
+    srcs = ["experiments/volatile_experiment.cc"],
+    copts = ["-std=c++17", "-Wall", "-Wextra", "-Wpedantic"],
 )

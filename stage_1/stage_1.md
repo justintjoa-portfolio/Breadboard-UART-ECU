@@ -1,0 +1,1 @@
+Ring buffer is pre-implemented, no serious note here. 
