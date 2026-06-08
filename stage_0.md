@@ -1099,6 +1099,239 @@ Also ask:
 5. Is the value known at compile time, link time, load time, or only runtime?
 6. Am I talking about the pointer variable or the object being pointed to?
 
+## Q39: Why does `const` placement matter for pointers?
+
+### Answer
+
+With pointers, `const` can apply to:
+
+1. The object being pointed to
+2. The pointer variable itself
+3. Both
+
+A useful reading rule:
+
+> Read from right to left around the `*`.
+
+---
+
+### Pointer to const data
+
+```cpp
+const int* p;
+```
+
+Same as:
+
+```cpp
+int const* p;
+```
+
+Meaning:
+
+```text
+p points to an int that cannot be modified through p.
+p itself can be changed to point somewhere else.
+```
+
+Example:
+
+```cpp
+int x = 1;
+int y = 2;
+
+const int* p = &x;
+p = &y;      // OK
+*p = 10;     // Error
+```
+
+---
+
+### Const pointer to mutable data
+
+```cpp
+int* const p = &x;
+```
+
+Meaning:
+
+```text
+p itself cannot be changed.
+The int it points to can be modified through p.
+```
+
+Example:
+
+```cpp
+int x = 1;
+int y = 2;
+
+int* const p = &x;
+*p = 10;     // OK
+p = &y;      // Error
+```
+
+---
+
+### Const pointer to const data
+
+```cpp
+const int* const p = &x;
+```
+
+Same idea as:
+
+```cpp
+int const* const p = &x;
+```
+
+Meaning:
+
+```text
+p cannot be changed.
+The int cannot be modified through p.
+```
+
+Example:
+
+```cpp
+int x = 1;
+int y = 2;
+
+const int* const p = &x;
+*p = 10;     // Error
+p = &y;      // Error
+```
+
+---
+
+## Q40: How does this apply to strings?
+
+```cpp
+const char* message = "hello";
+```
+
+### Answer
+
+This means:
+
+```text
+message is a pointer to const char.
+```
+
+So:
+
+```cpp
+message = "world";   // OK
+message[0] = 'H';    // Error
+```
+
+The pointer variable can point somewhere else, but the characters in the string literal should not be modified.
+
+There are two separate things:
+
+```text
+message:
+    pointer variable
+    usually .data if global
+    initialized to address of "hello"
+
+"hello":
+    string literal
+    usually .rodata
+    read-only
+```
+
+---
+
+## Q41: What if the pointer itself is const?
+
+```cpp
+const char* const message = "hello";
+```
+
+### Answer
+
+This means:
+
+```text
+message is a const pointer to const char.
+```
+
+So:
+
+```cpp
+message = "world";   // Error
+message[0] = 'H';    // Error
+```
+
+If this is global or namespace-scope, the pointer may be placed in read-only storage because both the pointer and the pointed-to characters are immutable.
+
+Conceptually:
+
+```text
+message:
+    cannot be reseated
+    points to "hello"
+
+"hello":
+    cannot be modified
+```
+
+---
+
+## Q42: What is the embedded takeaway?
+
+### Answer
+
+For embedded code, always ask two separate questions:
+
+```text
+Can I change the pointer?
+Can I change the thing it points to?
+```
+
+Examples:
+
+```cpp
+volatile uint32_t* uart_status;
+```
+
+Pointer to a volatile hardware register. The pointer can change.
+
+```cpp
+volatile uint32_t* const uart_status;
+```
+
+Const pointer to a volatile hardware register. The pointer cannot change, but the register value can change due to hardware.
+
+This is common for memory-mapped I/O.
+
+---
+
+## Q43: How should I remember pointer const syntax?
+
+### Answer
+
+Use this table:
+
+```text
+const int* p
+    Pointer can change.
+    Data cannot be changed through p.
+
+int* const p
+    Pointer cannot change.
+    Data can be changed through p.
+
+const int* const p
+    Pointer cannot change.
+    Data cannot be changed through p.
+```
+
+For Tiny ECU, this will matter when writing driver APIs and hardware register definitions.
+
+
 ---
 
 # Stage 0 Completion Criteria
