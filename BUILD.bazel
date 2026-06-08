@@ -25,5 +25,5 @@ cc_test(
 cc_binary(
     name = "volatile_experiment",
     srcs = ["experiments/volatile_experiment.cc"],
-    copts = ["-std=c++17", "-Wall", "-Wextra", "-Wpedantic"],
+    copts = ["-std=c++17", "-Wall", "-Wextra", "-Wpedantic", "-O2"],
 )
